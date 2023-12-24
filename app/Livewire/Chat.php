@@ -2,16 +2,26 @@
 
 namespace App\Livewire;
 
+use App\Enums\ChatType;
 use App\Events\MessageSent;
 use App\Events\Typing;
 use App\Models\Chat as ChatModel;
+use App\Models\User;
 use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Http\RedirectResponse;
+use Illuminate\Support\Str;
 use Livewire\Attributes\Validate;
 use Livewire\Component;
 
 class Chat extends Component
 {
     public $chats = [];
+
+    public bool $isCreate = false;
+    public string $userSearch = '';
+    public string $chatTitle = '';
+    public array $selectedUsers = [];
+    public $searchedUsers = [];
     public array $typers = [];
 
     public ?ChatModel $chat = null;
@@ -21,7 +31,10 @@ class Chat extends Component
 
     public function mount(): void
     {
-        $this->chats = ChatModel::query()->my()->with(['messages.user', 'users'])->get();
+        $this->chats = ChatModel::query()
+            ->my()->with(['messages.user', 'users'])
+            ->orderByDesc('updated_at')
+            ->get();
 
         $this->chat?->load(['messages.user', 'users']);
     }
@@ -61,6 +74,58 @@ class Chat extends Component
         }
     }
 
+    public function toggleCreate(): void
+    {
+        $this->isCreate = ! $this->isCreate;
+    }
+
+    public function addUser(User $user): void
+    {
+        $this->selectedUsers[] = $user;
+    }
+
+    public function removeUser(int $index): void
+    {
+        unset($this->selectedUsers[$index]);
+    }
+
+    public function createChat(string $type)
+    {
+        $validationRules = [
+            'chatTitle' => 'nullable|string',
+            'selectedUsers' => 'required|array|min:1',
+        ];
+
+        if (count($this->selectedUsers) > 1) {
+            $validationRules['chatTitle'] = 'required|string|min:3';
+        }
+
+        $this->validate($validationRules);
+
+        $type = ChatType::tryFrom($type);
+
+        $chat = ChatModel::query()->create([
+            'uid' => Str::uuid(),
+            'title' => $this->chatTitle,
+            'type' => $type,
+        ]);
+
+        $chat
+            ->users()
+            ->attach([
+                ...collect($this->selectedUsers)->pluck('id')->toArray(),
+                auth()->id(),
+            ]);
+
+        $this->chats->push($chat);
+
+        $this->isCreate = false;
+        $this->chatTitle = '';
+        $this->selectedUsers = [];
+
+        return to_route('chat', $chat);
+    }
+
     public function send(): void
     {
         if (! $this->chat) {
@@ -74,6 +139,7 @@ class Chat extends Component
             'message' => $this->message,
         ]);
 
+        $this->chat->update(['updated_at' => now()]);
 
         broadcast(new MessageSent($this->chat, $message));
         broadcast(new Typing($this->chat->uid, auth()->id(), ''));
@@ -85,6 +151,33 @@ class Chat extends Component
 
     public function render()
     {
+        if ($this->userSearch) {
+            $ids = collect($this->selectedUsers)->pluck('id');
+            $userIdsFromChats = ChatModel::query()
+                ->whereIn('id', $this->chats->pluck('id'))
+                ->has('users', '=', 2)
+                ->with('users')
+                ->get()
+                ->pluck('users')
+                ->flatten()
+                ->where('id', '!=', auth()->id())
+                ->pluck('id')
+                ->toArray();
+
+            $this->searchedUsers = Collection::make(
+                User::query()
+                    ->where(
+                        fn($q) => $q
+                            ->where('id', $this->userSearch)
+                            ->orWhere('email', 'like', "%{$this->userSearch}%")
+                            ->orWhere('email', 'like', "%{$this->userSearch}%"),
+                    )
+                    ->whereNotIn('id', [...$userIdsFromChats, ...$ids, auth()->id()])
+                    ->limit(3)
+                    ->get(),
+            );
+        }
+
         return view('livewire.chat');
     }
 }
