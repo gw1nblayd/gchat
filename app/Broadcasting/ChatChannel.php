@@ -2,23 +2,24 @@
 
 namespace App\Broadcasting;
 
+use App\Models\Chat;
 use App\Models\User;
 
 class ChatChannel
 {
-    /**
-     * Create a new channel instance.
-     */
     public function __construct()
     {
         //
     }
 
-    /**
-     * Authenticate the user's access to the channel.
-     */
-    public function join(User $user): array|bool
+    public function join(User $user, string $chatUid): array|bool
     {
-        return auth()->check();
+        return Chat::query()
+            ->where('uid', $chatUid)
+            ->whereHas(
+                'users',
+                fn($q) => $q->where('user_id', auth()->id()),
+            )
+            ->count();
     }
 }

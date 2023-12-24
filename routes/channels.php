@@ -18,4 +18,4 @@ use Illuminate\Support\Facades\Broadcast;
 //    return (int) $user->id === (int) $id;
 //});
 
-Broadcast::channel('chat', ChatChannel::class);
+Broadcast::channel('chat.{chat}', ChatChannel::class);
